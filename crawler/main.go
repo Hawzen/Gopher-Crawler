@@ -15,7 +15,7 @@ import (
 const MAX_DEPTH = 2
 const MAX_PAGES_BUFFER = 1000
 const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
-const SPIDER_COUNT = 1
+const SPIDER_COUNT = 10
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
@@ -110,8 +110,19 @@ func main() {
 	}
 	index.pages_to_crawl <- Page{url: target_url}
 
+	// Fill initial pages
+	// This is a hack to make sure that the first page is crawled before the other spiders start
+	// Fix this via a channel or something
+	mommy_spider := Spider{
+		id:   0,
+		name: SPIDER_NAMES[0],
+	}
+	wg.Add(1)
+	go mommy_spider.crawl(&index, &wg)
+	time.Sleep(5 * time.Second)
+
 	// Create spiders
-	for i := 0; i < SPIDER_COUNT; i++ {
+	for i := 1; i < SPIDER_COUNT; i++ {
 		spider := Spider{
 			id:   i,
 			name: SPIDER_NAMES[i],
@@ -120,9 +131,13 @@ func main() {
 		go spider.crawl(&index, &wg)
 	}
 
-	// TODO: Log all spiders here
-
 	wg.Wait()
+	log.Printf("Nest destroyed; pages conqured:")
+	for key := range index.inprogress_or_done_pages {
+		log.Println(key)
+	}
+	log.Printf("Totalling %d pages", len(index.inprogress_or_done_pages))
+
 }
 
 func (spider *Spider) crawl(index *Index, wg *sync.WaitGroup) {
@@ -130,11 +145,10 @@ func (spider *Spider) crawl(index *Index, wg *sync.WaitGroup) {
 	for {
 		page_to_crawl, no_more_pages := spider.fetch_page(index)
 		if no_more_pages {
-			log.Printf("%s:\tfinished crawling", spider.name)
+			log.Printf("%s:\tcommitted seppuku", spider.name)
 			wg.Done()
 			return
 		}
-		log.Printf("%s:\tfinished fetching page %s", spider.name, page_to_crawl.url)
 
 		related_pages := spider.crawl_page(&page_to_crawl)
 		if related_pages == nil {
