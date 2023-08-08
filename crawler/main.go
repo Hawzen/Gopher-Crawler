@@ -12,9 +12,10 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-const MAX_DEPTH = 1
+const MAX_DEPTH = 2
 const MAX_PAGES_BUFFER = 1000
-const MAX_URLS_PER_PAGE_PER_DOMAIN = 3
+const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
+const SPIDER_COUNT = 1
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
@@ -109,14 +110,15 @@ func main() {
 	}
 	index.pages_to_crawl <- Page{url: target_url}
 
-	wg.Add(1)
-	spider := Spider{
-		id:   0,
-		name: SPIDER_NAMES[0],
+	// Create spiders
+	for i := 0; i < SPIDER_COUNT; i++ {
+		spider := Spider{
+			id:   i,
+			name: SPIDER_NAMES[i],
+		}
+		wg.Add(1)
+		go spider.crawl(&index, &wg)
 	}
-
-	// Begin crawling
-	go spider.crawl(&index, &wg)
 
 	// TODO: Log all spiders here
 
@@ -165,6 +167,7 @@ func (spider *Spider) fetch_page(index *Index) (Page, bool) {
 	// If there are no more pages to crawl then return
 	// Note that other spiders may still be crawling and terminating now is not guaranteed to be correct
 	// Fix this later maybe by using a channel to signal that all spiders are done
+	// Something is deeply wrong with this code
 	if len(index.pages_to_crawl) == 0 {
 		return Page{}, true
 	}
@@ -265,6 +268,11 @@ func validate_url(url string, current_url URL) (URL, bool) {
 	// If link is not http or https then mark it as invalid
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return "", false
+	}
+
+	// Remove trailing slash
+	if strings.HasSuffix(url, "/") {
+		url = url[:len(url)-1]
 	}
 
 	return url, true
