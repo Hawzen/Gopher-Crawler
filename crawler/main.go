@@ -4,10 +4,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+const MAX_DEPTH = 3
 
 type URL = string
 
@@ -21,35 +24,72 @@ type Page struct {
 	time_found    time.Time
 }
 
+type Index struct {
+	inprogress_or_done_pages map[URL]bool
+	pages_to_crawl           chan Page
+	mu                       sync.Mutex
+}
+
+type Spider struct {
+	id int
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatal("Missing target URL")
-		os.Exit(1)
+	if len(os.Args) != 2 {
+		log.Fatal("Usage: go run . <target_url>")
 	}
 
 	target_url := os.Args[1]
-	log.Printf("Begin crawling %s", target_url)
+	log.Printf("Nest established; target %s", target_url)
 
-	// Create a new page
-	page := Page{url: target_url}
-	crawl_page(&page)
+	index := Index{
+		inprogress_or_done_pages: make(map[URL]bool),
+		pages_to_crawl:           make(chan Page),
+	}
+
+	spider := Spider{
+		id: 1,
+	}
+
+	// Begin crawling
+	go spider.crawl(&index)
+
+	// Add the target url to the index
+	index.pages_to_crawl <- Page{url: target_url}
+}
+
+func (spider *Spider) crawl(index *Index) {
+	log.Printf("Spider %d started crawling", spider.id)
+	page_to_crawl := spider.fetch_page(index)
+	log.Printf("Spider %d finished fetching page %s", spider.id, page_to_crawl.url)
+	related_pages := spider.crawl_page(&page_to_crawl)
+	log.Printf("Spider %d finished crawling page %s, related pages count: %d", spider.id, page_to_crawl.url, len(related_pages))
 
 }
 
-func crawl_page(page *Page) map[URL]Page {
+func (spider *Spider) fetch_page(index *Index) Page {
+	index.mu.Lock()
+	defer index.mu.Unlock()
+	page_to_crawl := <-index.pages_to_crawl
+	index.inprogress_or_done_pages[page_to_crawl.url] = true
+	return page_to_crawl
+}
+
+func (spider *Spider) crawl_page(page *Page) map[URL]Page {
+	if page.depth > MAX_DEPTH {
+		return nil
+	}
+
 	resp, err := http.Get(page.url)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("Crawling %s, Status: %s, Size: %d", page.url, resp.Status, resp.ContentLength)
-
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
+		// In the future I should add "FAILED TO CRAWL" pages
 		log.Fatal(err)
-		os.Exit(1)
 	}
 
 	// Extract all links from the page
@@ -61,9 +101,6 @@ func crawl_page(page *Page) map[URL]Page {
 	page.is_crawled = true
 
 	log.Printf("Finished crawling %s, Title: %s, Related Pages: %d", page.url, page.title, len(page.related_pages))
-
-	// Add current page to the DB
-	// TODO: Add to DB
 
 	return page.related_pages
 }
