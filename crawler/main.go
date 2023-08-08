@@ -52,15 +52,29 @@ func crawl_page(page *Page) map[URL]Page {
 		os.Exit(1)
 	}
 
-	page.title = doc.Find("title").Text()
-
 	// Extract all links from the page
-	page.related_pages = make(map[URL]Page)
+	page.related_pages = find_related_pages(doc, page)
+
+	// Mark the page as crawled
+	page.title = doc.Find("title").Text()
+	page.time_crawled = time.Now()
+	page.is_crawled = true
+
+	log.Printf("Finished crawling %s, Title: %s, Related Pages: %d", page.url, page.title, len(page.related_pages))
+
+	// Add current page to the DB
+	// TODO: Add to DB
+
+	return page.related_pages
+}
+
+func find_related_pages(doc *goquery.Document, current_page *Page) map[URL]Page {
+	related_pages := make(map[URL]Page)
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
 		link, _ := s.Attr("href")
 
 		// If the link is in extracted_pages already then skip
-		if _, ok := page.related_pages[link]; ok {
+		if _, ok := related_pages[link]; ok {
 			return
 		}
 
@@ -68,17 +82,10 @@ func crawl_page(page *Page) map[URL]Page {
 			url:        link,
 			is_crawled: false,
 			time_found: time.Now(),
-			depth:      page.depth + 1,
+			depth:      current_page.depth + 1,
 		}
 
-		page.related_pages[link] = new_page
+		related_pages[link] = new_page
 	})
-
-	// Mark the page as crawled
-	page.is_crawled = true
-	page.time_crawled = time.Now()
-
-	log.Printf("Finished crawling %s, Title: %s, Related Pages: %d", page.url, page.title, len(page.related_pages))
-
-	return page.related_pages
+	return related_pages
 }
