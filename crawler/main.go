@@ -12,63 +12,63 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-const MAX_DEPTH = 2
+const MAX_DEPTH = 1
 const MAX_PAGES_BUFFER = 100
 const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
 const SPIDER_COUNT = 10
+const CRAWL_TIME = 10 * time.Second
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
-	"Black Widow",
-	"Brown Recluse",
-	"Hobo Spider",
-	"Tarantula",
-	"Jumping Spider",
-	"Crab Spider",
-	"Wolf Spider",
-	"Orb Weaver",
-	"Camel Spider",
-	"Daddy Longlegs",
-	"Garden Spider",
-	"Funnel Web Spider",
-	"Sac Spider",
-	"Cellar Spider",
-	"Fishing Spider",
-	"Trapdoor Spider",
-	"Golden Silk Orb-Weaver",
-	"Redback Spider",
-	"Mouse Spider",
-	"Banana Spider",
-	"Brazilian Wandering Spider",
-	"Goliath Birdeater",
-	"Sydney Funnel-Web Spider",
-	"Mexican Redknee Tarantula",
-	"Peacock Spider",
-	"Zebra Spider",
-	"White-tailed Spider",
-	"Spitting Spider",
-	"Bold Jumping Spider",
-	"Brown Huntsman Spider",
-	"Ghost Spider",
-	"Long-jawed Orb Weaver",
-	"Marbled Orb Weaver",
-	"Net-casting Spider",
-	"Water Spider",
-	"Woodlouse Spider",
-	"Trapdoor Spider",
-	"Bird-dropping Spider",
-	"Crab-like Spiny Orb Weaver",
-	"Domino Spider",
-	"False Black Widow",
-	"Grass Spider",
-	"Happy Face Spider",
-	"Metallic Green Jumping Spider",
-	"Pumpkin Spider",
-	"Red Widow Spider",
-	"Silver Argiope",
-	"Tan Jumping Spider",
-	"Walnut Orb Weaver",
-	"Yellow Sac Spider",
+	"Black Widow 🖤",
+	"Brown Recluse 👀",
+	"Hobo Spider 🎒",
+	"Tarantula 🕸️",
+	"Jumping Spider 🦗",
+	"Crab Spider 🦀",
+	"Wolf Spider 🐺",
+	"Orb Weaver 🕸️",
+	"Camel Spider 🐫",
+	"Daddy Longlegs 🦵",
+	"Garden Spider 🌻",
+	"Funnel Web Spider 🕳️",
+	"Sac Spider 🛍️",
+	"Cellar Spider 🍷",
+	"Fishing Spider 🎣",
+	"Trapdoor Spider 🚪",
+	"Golden Silk Orb-Weaver 🌟",
+	"Redback Spider 🔴",
+	"Mouse Spider 🐭",
+	"Banana Spider 🍌",
+	"Brazilian Wandering Spider 🚶",
+	"Goliath Birdeater 🐦",
+	"Sydney Funnel-Web Spider 🇦🇺",
+	"Mexican Redknee Tarantula 🇲🇽",
+	"Peacock Spider 🦚",
+	"Zebra Spider 🦓",
+	"White-tailed Spider 🦌",
+	"Spitting Spider 💦",
+	"Bold Jumping Spider 🕺",
+	"Brown Huntsman Spider 🌳",
+	"Ghost Spider 👻",
+	"Long-jawed Orb Weaver 🕸️",
+	"Marbled Orb Weaver 🕸️",
+	"Net-casting Spider 🕸️",
+	"Water Spider 🌊",
+	"Woodlouse Spider 🐞",
+	"Bird-dropping Spider 💩",
+	"Crab-like Spiny Orb Weaver 🦀",
+	"Domino Spider 🎲",
+	"False Black Widow 🕸️",
+	"Grass Spider 🌿",
+	"Happy Face Spider 😊",
+	"Metallic Green Jumping Spider 💚",
+	"Pumpkin Spider 🎃",
+	"Red Widow Spider 🔴👩",
+	"Silver Argiope 🕸️",
+	"Tan Jumping Spider 🦶",
+	"Walnut Orb Weaver 🥜",
+	"Yellow Sac Spider 💛",
 }
 
 type URL = string
@@ -89,8 +89,9 @@ type Index struct {
 }
 
 type Spider struct {
-	id   int
-	name string
+	id     int
+	name   string
+	logger *log.Logger
 }
 
 func main() {
@@ -113,11 +114,16 @@ func main() {
 		spider := Spider{
 			id:   i,
 			name: SPIDER_NAMES[i],
+			logger: log.NewWithOptions(os.Stderr, log.Options{
+				ReportTimestamp: true,
+				TimeFormat:      time.Kitchen,
+				Prefix:          SPIDER_NAMES[i],
+			}),
 		}
 		go spider.crawl(&index)
 	}
 
-	time.Sleep(15 * time.Second)
+	time.Sleep(CRAWL_TIME)
 
 	log.Infof("Nest destroyed; pages conqured:")
 	for key := range index.inprogress_or_done_pages {
@@ -128,39 +134,36 @@ func main() {
 }
 
 func (spider *Spider) crawl(index *Index) {
-	log.Infof("%s:\tstarted crawling", spider.name)
+	spider.logger.Infof("started crawling")
 	for {
-		page_to_crawl, no_more_pages := spider.fetch_page(index)
-		if no_more_pages {
-			log.Warn("%s:\tcommitted seppuku", spider.name)
-			return
-		}
+		page_to_crawl := spider.fetch_page(index)
 
 		related_pages := spider.crawl_page(&page_to_crawl)
-		if related_pages == nil {
-			continue
+		if related_pages != nil {
+			spider.add_pages(related_pages, index)
 		}
-		spider.add_pages(related_pages, index)
-		log.Infof("%s:\tfinished crawling page %s, related pages count: %d", spider.name, page_to_crawl.url, len(related_pages))
+		spider.logger.Info("finished crawling page", "URL", page_to_crawl.url, "related pages count", len(related_pages))
 
 		// Add current page to the DB
 	}
 }
 
 func (spider *Spider) add_pages(related_pages map[URL]Page, index *Index) {
-	for url, page := range related_pages {
-		// If the page is already in the index then don't add it
-		if index.inprogress_or_done_pages[url] {
-			continue
-		}
+	for _, page := range related_pages {
 		index.pages_to_crawl <- page
 	}
 }
 
-func (spider *Spider) fetch_page(index *Index) (Page, bool) {
-	page_to_crawl := <-index.pages_to_crawl
-	index.inprogress_or_done_pages[page_to_crawl.url] = true
-	return page_to_crawl, false
+func (spider *Spider) fetch_page(index *Index) Page {
+	for {
+		page_to_crawl := <-index.pages_to_crawl
+		// If the page is already in the index then don't add it
+		if index.inprogress_or_done_pages[page_to_crawl.url] {
+			continue
+		}
+		index.inprogress_or_done_pages[page_to_crawl.url] = true
+		return page_to_crawl
+	}
 }
 
 func (spider *Spider) crawl_page(page *Page) map[URL]Page {
@@ -170,14 +173,14 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 
 	resp, err := http.Get(page.url)
 	if err != nil {
-		log.Warn(err)
+		spider.logger.Warn(err)
 		return nil
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		log.Warn(err)
+		spider.logger.Warn(err)
 		return nil
 	}
 
@@ -261,6 +264,9 @@ func validate_url(url string, current_url URL) (URL, bool) {
 	if strings.HasSuffix(url, "/") {
 		url = url[:len(url)-1]
 	}
+
+	// Convert to lowercase
+	url = strings.ToLower(url)
 
 	return url, true
 }
