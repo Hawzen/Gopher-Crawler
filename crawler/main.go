@@ -13,11 +13,11 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-const MAX_DEPTH = 1
-const MAX_PAGES_BUFFER = 100
+const MAX_DEPTH = 3
+const MAX_PAGES_BUFFER = 100000
 const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
 const SPIDER_COUNT = 10
-const CRAWL_TIME = 10 * time.Second
+const CRAWL_TIME = 20 * time.Second
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
@@ -142,7 +142,7 @@ func (spider *Spider) crawl(index *Index) {
 		if related_pages != nil {
 			spider.add_pages(related_pages, index)
 		}
-		spider.logger.Info("finished crawling page", "URL", page_to_crawl.url, "related pages count", len(related_pages))
+		spider.logger.Info("finished crawling page", "URL", page_to_crawl.url, "related pages count", len(related_pages), "index", len(index.pages_to_crawl))
 
 		// Add current page to the DB
 	}
@@ -277,6 +277,9 @@ func validate_max_url_count_per_domain(url URL, url_domain_to_count map[string]i
 		return "", false
 	}
 	parts := strings.Split(parsed_url.Hostname(), ".")
+	if len(parts) < 2 {
+		return "", false
+	}
 	domain := parts[len(parts)-2] + "." + parts[len(parts)-1]
 	url_domain_to_count[domain] += 1
 	if url_domain_to_count[domain] > MAX_URLS_PER_PAGE_PER_DOMAIN {
@@ -296,7 +299,5 @@ func display_crawled_pages(index *Index) {
 		t.AppendRow(table.Row{url, page.title, page.depth, len(page.related_pages)})
 	}
 	t.SetTitle("Crawled pages")
-	t.SetAllowedRowLength(150)
-	t.SetStyle(table.StyleColoredBlackOnMagentaWhite)
 	t.Render()
 }
