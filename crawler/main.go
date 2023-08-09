@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/log"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 const MAX_DEPTH = 1
@@ -20,55 +21,55 @@ const CRAWL_TIME = 10 * time.Second
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
-	"Black Widow 🖤",
-	"Brown Recluse 👀",
-	"Hobo Spider 🎒",
-	"Tarantula 🕸️",
-	"Jumping Spider 🦗",
-	"Crab Spider 🦀",
-	"Wolf Spider 🐺",
-	"Orb Weaver 🕸️",
-	"Camel Spider 🐫",
-	"Daddy Longlegs 🦵",
-	"Garden Spider 🌻",
-	"Funnel Web Spider 🕳️",
-	"Sac Spider 🛍️",
-	"Cellar Spider 🍷",
-	"Fishing Spider 🎣",
-	"Trapdoor Spider 🚪",
+	"Black Widow        🖤",
+	"Brown Recluse      👀",
+	"Hobo Spider        🎒",
+	"Tarantula          🕸️",
+	"Jumping Spider     🦗",
+	"Crab Spider        🦀",
+	"Wolf Spider        🐺",
+	"Orb Weaver         🕸️",
+	"Camel Spider       🐫",
+	"Daddy Longlegs     🦵",
+	"Garden Spider      🌻",
+	"Funnel Web Spider  🕳️",
+	"Sac Spider         🛍️",
+	"Cellar Spider      🍷",
+	"Fishing Spider     🎣",
+	"Trapdoor Spider    🚪",
 	"Golden Silk Orb-Weaver 🌟",
-	"Redback Spider 🔴",
-	"Mouse Spider 🐭",
-	"Banana Spider 🍌",
+	"Redback Spider     🔴",
+	"Mouse Spider       🐭",
+	"Banana Spider      🍌",
 	"Brazilian Wandering Spider 🚶",
-	"Goliath Birdeater 🐦",
+	"Goliath Birdeater  🐦",
 	"Sydney Funnel-Web Spider 🇦🇺",
 	"Mexican Redknee Tarantula 🇲🇽",
-	"Peacock Spider 🦚",
-	"Zebra Spider 🦓",
+	"Peacock Spider     🦚",
+	"Zebra Spider       🦓",
 	"White-tailed Spider 🦌",
-	"Spitting Spider 💦",
+	"Spitting Spider    💦",
 	"Bold Jumping Spider 🕺",
 	"Brown Huntsman Spider 🌳",
-	"Ghost Spider 👻",
+	"Ghost Spider       👻",
 	"Long-jawed Orb Weaver 🕸️",
 	"Marbled Orb Weaver 🕸️",
 	"Net-casting Spider 🕸️",
-	"Water Spider 🌊",
-	"Woodlouse Spider 🐞",
+	"Water Spider       🌊",
+	"Woodlouse Spider   🐞",
 	"Bird-dropping Spider 💩",
 	"Crab-like Spiny Orb Weaver 🦀",
-	"Domino Spider 🎲",
-	"False Black Widow 🕸️",
-	"Grass Spider 🌿",
-	"Happy Face Spider 😊",
+	"Domino Spider      🎲",
+	"False Black Widow  🕸️",
+	"Grass Spider       🌿",
+	"Happy Face Spider  😊",
 	"Metallic Green Jumping Spider 💚",
-	"Pumpkin Spider 🎃",
-	"Red Widow Spider 🔴👩",
-	"Silver Argiope 🕸️",
+	"Pumpkin Spider     🎃",
+	"Red Widow Spider   👩🔴",
+	"Silver Argiope     🕸️",
 	"Tan Jumping Spider 🦶",
-	"Walnut Orb Weaver 🥜",
-	"Yellow Sac Spider 💛",
+	"Walnut Orb Weaver  🥜",
+	"Yellow Sac Spider  💛",
 }
 
 type URL = string
@@ -84,7 +85,7 @@ type Page struct {
 }
 
 type Index struct {
-	inprogress_or_done_pages map[URL]bool
+	inprogress_or_done_pages map[URL]*Page
 	pages_to_crawl           chan Page
 }
 
@@ -103,7 +104,7 @@ func main() {
 	log.Infof("Nest established; target %s", target_url)
 
 	index := Index{
-		inprogress_or_done_pages: make(map[URL]bool),
+		inprogress_or_done_pages: make(map[URL]*Page),
 		pages_to_crawl:           make(chan Page, MAX_PAGES_BUFFER),
 	}
 	index.pages_to_crawl <- Page{url: target_url}
@@ -126,9 +127,8 @@ func main() {
 	time.Sleep(CRAWL_TIME)
 
 	log.Infof("Nest destroyed; pages conqured:")
-	for key := range index.inprogress_or_done_pages {
-		log.Infof(key)
-	}
+	display_crawled_pages(&index)
+
 	log.Infof("Totalling %d pages", len(index.inprogress_or_done_pages))
 
 }
@@ -138,7 +138,7 @@ func (spider *Spider) crawl(index *Index) {
 	for {
 		page_to_crawl := spider.fetch_page(index)
 
-		related_pages := spider.crawl_page(&page_to_crawl)
+		related_pages := spider.crawl_page(page_to_crawl)
 		if related_pages != nil {
 			spider.add_pages(related_pages, index)
 		}
@@ -154,15 +154,15 @@ func (spider *Spider) add_pages(related_pages map[URL]Page, index *Index) {
 	}
 }
 
-func (spider *Spider) fetch_page(index *Index) Page {
+func (spider *Spider) fetch_page(index *Index) *Page {
 	for {
 		page_to_crawl := <-index.pages_to_crawl
-		// If the page is already in the index then don't add it
-		if index.inprogress_or_done_pages[page_to_crawl.url] {
+		// If the page is already inprogress or done then skip
+		if _, ok := index.inprogress_or_done_pages[page_to_crawl.url]; ok {
 			continue
 		}
-		index.inprogress_or_done_pages[page_to_crawl.url] = true
-		return page_to_crawl
+		index.inprogress_or_done_pages[page_to_crawl.url] = &page_to_crawl
+		return &page_to_crawl
 	}
 }
 
@@ -283,4 +283,20 @@ func validate_max_url_count_per_domain(url URL, url_domain_to_count map[string]i
 		return "", false
 	}
 	return url, true
+}
+
+func display_crawled_pages(index *Index) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"URL", "Title", "Depth", "Number of related pages"})
+	for url, page := range index.inprogress_or_done_pages {
+		if page.is_crawled == false {
+			continue
+		}
+		t.AppendRow(table.Row{url, page.title, page.depth, len(page.related_pages)})
+	}
+	t.SetTitle("Crawled pages")
+	t.SetAllowedRowLength(150)
+	t.SetStyle(table.StyleColoredBlackOnMagentaWhite)
+	t.Render()
 }
