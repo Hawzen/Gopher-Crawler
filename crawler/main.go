@@ -6,14 +6,13 @@ import (
 	url_operations "net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 const MAX_DEPTH = 2
-const MAX_PAGES_BUFFER = 1000
+const MAX_PAGES_BUFFER = 100
 const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
 const SPIDER_COUNT = 10
 
@@ -86,7 +85,6 @@ type Page struct {
 type Index struct {
 	inprogress_or_done_pages map[URL]bool
 	pages_to_crawl           chan Page
-	mu                       sync.Mutex
 }
 
 type Spider struct {
@@ -95,8 +93,6 @@ type Spider struct {
 }
 
 func main() {
-	var wg sync.WaitGroup
-
 	if len(os.Args) != 2 {
 		log.Fatal("Usage: go run . <target_url>")
 	}
@@ -110,28 +106,17 @@ func main() {
 	}
 	index.pages_to_crawl <- Page{url: target_url}
 
-	// Fill initial pages
-	// This is a hack to make sure that the first page is crawled before the other spiders start
-	// Fix this via a channel or something
-	mommy_spider := Spider{
-		id:   0,
-		name: SPIDER_NAMES[0],
-	}
-	wg.Add(1)
-	go mommy_spider.crawl(&index, &wg)
-	time.Sleep(5 * time.Second)
-
 	// Create spiders
-	for i := 1; i < SPIDER_COUNT; i++ {
+	for i := 0; i < SPIDER_COUNT; i++ {
 		spider := Spider{
 			id:   i,
 			name: SPIDER_NAMES[i],
 		}
-		wg.Add(1)
-		go spider.crawl(&index, &wg)
+		go spider.crawl(&index)
 	}
 
-	wg.Wait()
+	time.Sleep(15 * time.Second)
+
 	log.Printf("Nest destroyed; pages conqured:")
 	for key := range index.inprogress_or_done_pages {
 		log.Println(key)
@@ -140,13 +125,12 @@ func main() {
 
 }
 
-func (spider *Spider) crawl(index *Index, wg *sync.WaitGroup) {
+func (spider *Spider) crawl(index *Index) {
 	log.Printf("%s:\tstarted crawling", spider.name)
 	for {
 		page_to_crawl, no_more_pages := spider.fetch_page(index)
 		if no_more_pages {
 			log.Printf("%s:\tcommitted seppuku", spider.name)
-			wg.Done()
 			return
 		}
 
@@ -162,9 +146,6 @@ func (spider *Spider) crawl(index *Index, wg *sync.WaitGroup) {
 }
 
 func (spider *Spider) add_pages(related_pages map[URL]Page, index *Index) {
-	index.mu.Lock()
-	defer index.mu.Unlock()
-
 	for url, page := range related_pages {
 		// If the page is already in the index then don't add it
 		if index.inprogress_or_done_pages[url] {
@@ -175,16 +156,6 @@ func (spider *Spider) add_pages(related_pages map[URL]Page, index *Index) {
 }
 
 func (spider *Spider) fetch_page(index *Index) (Page, bool) {
-	index.mu.Lock()
-	defer index.mu.Unlock()
-
-	// If there are no more pages to crawl then return
-	// Note that other spiders may still be crawling and terminating now is not guaranteed to be correct
-	// Fix this later maybe by using a channel to signal that all spiders are done
-	// Something is deeply wrong with this code
-	if len(index.pages_to_crawl) == 0 {
-		return Page{}, true
-	}
 	page_to_crawl := <-index.pages_to_crawl
 	index.inprogress_or_done_pages[page_to_crawl.url] = true
 	return page_to_crawl, false
