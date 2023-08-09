@@ -1,12 +1,13 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	url_operations "net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -98,7 +99,7 @@ func main() {
 	}
 
 	target_url := os.Args[1]
-	log.Printf("Nest established; target %s", target_url)
+	log.Infof("Nest established; target %s", target_url)
 
 	index := Index{
 		inprogress_or_done_pages: make(map[URL]bool),
@@ -107,6 +108,7 @@ func main() {
 	index.pages_to_crawl <- Page{url: target_url}
 
 	// Create spiders
+	// TODO: use per-spider logger instead of global logger
 	for i := 0; i < SPIDER_COUNT; i++ {
 		spider := Spider{
 			id:   i,
@@ -117,20 +119,20 @@ func main() {
 
 	time.Sleep(15 * time.Second)
 
-	log.Printf("Nest destroyed; pages conqured:")
+	log.Infof("Nest destroyed; pages conqured:")
 	for key := range index.inprogress_or_done_pages {
-		log.Println(key)
+		log.Infof(key)
 	}
-	log.Printf("Totalling %d pages", len(index.inprogress_or_done_pages))
+	log.Infof("Totalling %d pages", len(index.inprogress_or_done_pages))
 
 }
 
 func (spider *Spider) crawl(index *Index) {
-	log.Printf("%s:\tstarted crawling", spider.name)
+	log.Infof("%s:\tstarted crawling", spider.name)
 	for {
 		page_to_crawl, no_more_pages := spider.fetch_page(index)
 		if no_more_pages {
-			log.Printf("%s:\tcommitted seppuku", spider.name)
+			log.Warn("%s:\tcommitted seppuku", spider.name)
 			return
 		}
 
@@ -139,7 +141,7 @@ func (spider *Spider) crawl(index *Index) {
 			continue
 		}
 		spider.add_pages(related_pages, index)
-		log.Printf("%s:\tfinished crawling page %s, related pages count: %d", spider.name, page_to_crawl.url, len(related_pages))
+		log.Infof("%s:\tfinished crawling page %s, related pages count: %d", spider.name, page_to_crawl.url, len(related_pages))
 
 		// Add current page to the DB
 	}
@@ -168,15 +170,15 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 
 	resp, err := http.Get(page.url)
 	if err != nil {
-		log.Println(err)
+		log.Warn(err)
 		return nil
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		// In the future I should add "FAILED TO CRAWL" pages
-		log.Fatal(err)
+		log.Warn(err)
+		return nil
 	}
 
 	// Extract all links from the page
