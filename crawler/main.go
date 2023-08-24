@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	url_operations "net/url"
 	"os"
@@ -8,15 +10,27 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
+	"github.com/dgraph-io/dgo/v2"
+	"github.com/dgraph-io/dgo/v2/protos/api"
+	"google.golang.org/grpc"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
+// Breadth config
+// const MAX_DEPTH = 3
+// const MAX_URL_PER_PAGE = 10
+// const MAX_URLS_PER_PAGE_PER_DOMAIN = 2
+
+// Depth config
 const MAX_DEPTH = 3
-const MAX_PAGES_BUFFER = 100000
-const MAX_URLS_PER_PAGE_PER_DOMAIN = 10
-const SPIDER_COUNT = 10
+const MAX_URL_PER_PAGE = 7
+const MAX_URLS_PER_PAGE_PER_DOMAIN = 2
+
+// Global config
+const SPIDER_COUNT = 2
+const MAX_PAGES_BUFFER = 10
 const CRAWL_TIME = 20 * time.Second
 
 // This is a var but please don't change it :)
@@ -26,7 +40,7 @@ var SPIDER_NAMES = [...]string{
 	"Hobo Spider        🎒",            // The hobo spider is also known as the aggressive house spider.
 	"Tarantula          🕸️",           // Tarantulas can regenerate lost limbs.
 	"Jumping Spider     🦗",            // Jumping spiders have excellent vision and can jump up to 50 times their body length.
-	"Crab Spider        🦀",            // Crab spiders are named for their crab-like appearance and movement.
+	"Crab Spider    `   🦀",            // Crab spiders are named for their crab-like appearance and movement.
 	"Wolf Spider        🐺",            // Wolf spiders are known for their hunting ability and maternal care.
 	"Orb Weaver         🕸️",           // Orb weaver spiders spin large, circular webs.
 	"Camel Spider       🐫",            // Camel spiders are not true spiders and are actually a type of solifugae.
@@ -146,13 +160,16 @@ var SPIDER_NAMES = [...]string{
 type URL = string
 
 type Page struct {
-	url           URL
-	title         string
+	UID           string    `json:"uid,omitempty"`
+	URL           URL       `json:"url,omitempty"`
+	Title         string    `json:"title,omitempty"`
+	Related_pages []Page    `json:"related_pages,omitempty"`
+	Is_crawled    bool      `json:"is_crawled,omitempty"`
+	Depth         uint      `json:"depth,omitempty"`
+	Time_crawled  time.Time `json:"time_crawled,omitempty"`
+	Time_found    time.Time `json:"time_found,omitempty"`
+	DType         []string  `json:"dgraph.type,omitempty"`
 	related_pages map[URL]Page
-	is_crawled    bool
-	depth         uint
-	time_crawled  time.Time
-	time_found    time.Time
 }
 
 type Index struct {
@@ -171,6 +188,36 @@ func main() {
 		log.Fatal("Usage: go run . <target_url>")
 	}
 
+	// DB setup
+	d, err := grpc.Dial("localhost:9080", grpc.WithInsecure())
+	if err != nil {
+		panic(err)
+	}
+	defer d.Close()
+
+	dg := dgo.NewDgraphClient(api.NewDgraphClient(d))
+
+	// Drop all data
+	err = dg.Alter(context.Background(), &api.Operation{DropAll: true})
+	if err != nil {
+		panic(err)
+	}
+
+	// Create schema for Page
+	op := &api.Operation{}
+	op.Schema = `
+		url: string @index(exact) .
+		title: string @index(exact) .
+		related_pages: [uid] .
+		is_crawled: bool @index(bool) .
+		depth: int @index(int) .
+		time_crawled: datetime @index(hour) .
+		time_found: datetime @index(hour) .
+	`
+	if err := dg.Alter(context.Background(), op); err != nil {
+		log.Fatal(err)
+	}
+
 	target_url := os.Args[1]
 	log.Infof("Nest established; target %s", target_url)
 
@@ -178,10 +225,11 @@ func main() {
 		inprogress_or_done_pages: make(map[URL]*Page),
 		pages_to_crawl:           make(chan Page, MAX_PAGES_BUFFER),
 	}
-	index.pages_to_crawl <- Page{url: target_url}
+	index.pages_to_crawl <- Page{
+		URL: target_url,
+	}
 
 	// Create spiders
-	// TODO: use per-spider logger instead of global logger
 	for i := 0; i < SPIDER_COUNT; i++ {
 		spider := Spider{
 			id:   i,
@@ -192,7 +240,7 @@ func main() {
 				Prefix:          SPIDER_NAMES[i],
 			}),
 		}
-		go spider.crawl(&index)
+		go spider.crawl(&index, dg)
 	}
 
 	time.Sleep(CRAWL_TIME)
@@ -204,24 +252,35 @@ func main() {
 
 }
 
-func (spider *Spider) crawl(index *Index) {
+// ## Spider functions
+
+func (spider *Spider) crawl(index *Index, dg *dgo.Dgraph) {
 	spider.logger.Infof("started crawling")
 	for {
 		page_to_crawl := spider.fetch_page(index)
 
 		related_pages := spider.crawl_page(page_to_crawl)
 		if related_pages != nil {
-			spider.add_pages(related_pages, index)
+			spider.add_related_pages(page_to_crawl, index)
 		}
-		spider.logger.Info("finished crawling page", "URL", page_to_crawl.url, "related pages count", len(related_pages), "index", len(index.pages_to_crawl))
+		spider.logger.Info("finished crawling page", "URL", page_to_crawl.URL, "related pages count", len(related_pages), "index", len(index.pages_to_crawl))
 
-		// Add current page to the DB
+		spider.add_page_to_db(page_to_crawl, dg)
 	}
 }
 
-func (spider *Spider) add_pages(related_pages map[URL]Page, index *Index) {
-	for _, page := range related_pages {
-		index.pages_to_crawl <- page
+func (spider *Spider) add_related_pages(page *Page, index *Index) {
+	for _, related_page := range page.related_pages {
+		if page.URL == related_page.URL {
+			continue
+		}
+
+		select {
+		case index.pages_to_crawl <- related_page:
+		// If the channel is full then skip
+		default:
+			return
+		}
 	}
 }
 
@@ -229,20 +288,20 @@ func (spider *Spider) fetch_page(index *Index) *Page {
 	for {
 		page_to_crawl := <-index.pages_to_crawl
 		// If the page is already inprogress or done then skip
-		if _, ok := index.inprogress_or_done_pages[page_to_crawl.url]; ok {
+		if _, ok := index.inprogress_or_done_pages[page_to_crawl.URL]; ok {
 			continue
 		}
-		index.inprogress_or_done_pages[page_to_crawl.url] = &page_to_crawl
+		index.inprogress_or_done_pages[page_to_crawl.URL] = &page_to_crawl
 		return &page_to_crawl
 	}
 }
 
 func (spider *Spider) crawl_page(page *Page) map[URL]Page {
-	if page.depth > MAX_DEPTH {
+	if page.Depth > MAX_DEPTH {
 		return nil
 	}
 
-	resp, err := http.Get(page.url)
+	resp, err := http.Get(page.URL)
 	if err != nil {
 		spider.logger.Warn(err)
 		return nil
@@ -259,22 +318,84 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 	page.related_pages = find_related_pages(doc, page)
 
 	// Mark the page as crawled
-	page.title = doc.Find("title").Text()
-	page.time_crawled = time.Now()
-	page.is_crawled = true
+	page.Title = doc.Find("title").Text()
+	page.Time_crawled = time.Now()
+	page.Is_crawled = true
 
 	return page.related_pages
 }
+
+func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
+	// Add current page to the DB
+	Related_page := []Page{}
+	for _, p := range page.related_pages {
+		spider.logger.Info("related page info", "related pages", p.URL)
+		Related_page = append(Related_page, p)
+	}
+	page.Related_pages = Related_page
+	spider.logger.Info("made related apges", "related pages", page.Related_pages)
+
+	// Create a new transaction
+	txn := dg.NewTxn()
+
+	// Create a new request
+	req := &api.Request{CommitNow: true}
+
+	// Create a new query
+	req.Query = `query {
+		page(func: eq(url, "` + page.URL + `")) {
+			v as uid
+		}
+	}
+	`
+
+	// Create a new mutation
+	page.UID = "uid(v)"
+
+	// Marshal the new Page node into a JSON byte array
+	newPageBytes, err := json.Marshal(page)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	spider.logger.Info("adding page to db", "JSON", string(newPageBytes))
+
+	// Create a new mutation
+	mu := &api.Mutation{
+		SetJson: newPageBytes,
+	}
+
+	// Add the mutation to the request
+	req.Mutations = []*api.Mutation{mu}
+
+	// Execute the query
+	// Update email only if matching uid found.
+	if _, err := dg.NewTxn().Do(context.Background(), req); err != nil {
+		log.Fatal(err)
+	}
+
+	spider.logger.Info("adding page to db", "URL", page.URL)
+
+	// Commit the transaction
+	err = txn.Commit(context.Background())
+}
+
+// ## Page functions
 
 func find_related_pages(doc *goquery.Document, current_page *Page) map[URL]Page {
 	related_pages := make(map[URL]Page)
 	url_domain_to_count := make(map[string]int)
 
+	count_added := 0
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		if count_added > MAX_URL_PER_PAGE {
+			return
+		}
+
 		url, _ := s.Attr("href")
 
 		// If the url is invalid then skip
-		url, ok := validate_url(url, current_page.url)
+		url, ok := validate_url(url, current_page.URL)
 		if !ok {
 			return
 		}
@@ -299,17 +420,19 @@ func find_related_pages(doc *goquery.Document, current_page *Page) map[URL]Page 
 		domain := parts[len(parts)-2] + "." + parts[len(parts)-1]
 		url_domain_to_count[domain] += 1
 		if url_domain_to_count[domain] > MAX_URLS_PER_PAGE_PER_DOMAIN {
+			log.Info("skipping url", "URL", url, "reason", "too many urls from the same domain", "domain", domain)
 			return
 		}
 
 		new_page := Page{
-			url:        url,
-			is_crawled: false,
-			time_found: time.Now(),
-			depth:      current_page.depth + 1,
+			URL:        url,
+			Is_crawled: false,
+			Time_found: time.Now(),
+			Depth:      current_page.Depth + 1,
 		}
 
 		related_pages[url] = new_page
+		count_added += 1
 	})
 	return related_pages
 }
@@ -359,15 +482,17 @@ func validate_max_url_count_per_domain(url URL, url_domain_to_count map[string]i
 	return url, true
 }
 
+// ## Misc functions
+
 func display_crawled_pages(index *Index) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"URL", "Title", "Depth", "Number of related pages"})
 	for url, page := range index.inprogress_or_done_pages {
-		if page.is_crawled == false {
+		if page.Is_crawled == false {
 			continue
 		}
-		t.AppendRow(table.Row{url, page.title, page.depth, len(page.related_pages)})
+		t.AppendRow(table.Row{url, page.Title, page.Depth, len(page.related_pages)})
 	}
 	t.SetTitle("Crawled pages")
 	t.Render()
