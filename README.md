@@ -7,6 +7,7 @@ This is a webcrawler that attempts to create a symantic graph of a given target 
 - Use Go to crawl the target url
   - Visit [this](./docs/crawler.md) for more info
 - Use Dgraph to store the data
+  - Visit [this](./docs/dgraph.md) for more info
 - (WIP) Use Flask to analyze the data
 
 # Run
