@@ -1,7 +1,7 @@
-# GopherCrawler
+# gopher-crawler
 
 ## What
-This is a webcrawler that attempts to create a symantic graph of a given target url
+A web-crawler that creates a semantic graph of a website
 
 
 
