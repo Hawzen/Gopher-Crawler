@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/dgraph-io/dgo/v2"
 	"github.com/dgraph-io/dgo/v2/protos/api"
-	"google.golang.org/grpc"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -173,6 +172,7 @@ type URL = string
 type Page struct {
 	UID           string    `json:"uid,omitempty"`
 	URL           URL       `json:"url,omitempty"`
+	Domain        *Domain   `json:"domain,omitempty"`
 	Title         string    `json:"title,omitempty"`
 	Related_pages []Page    `json:"related_pages,omitempty"`
 	Is_crawled    bool      `json:"is_crawled,omitempty"`
@@ -183,6 +183,11 @@ type Page struct {
 	Summary       string    `json:"summary,omitempty"`
 	Keywords      []*string `json:"keywords,omitempty"`
 	related_pages map[URL]Page
+}
+
+type Domain struct {
+	UID  string `json:"uid,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 type Index struct {
@@ -201,35 +206,7 @@ func main() {
 		log.Fatal("Usage: go run . <target_url>")
 	}
 
-	// DB setup
-	d, err := grpc.Dial("localhost:9080", grpc.WithInsecure())
-	if err != nil {
-		panic(err)
-	}
-	defer d.Close()
-
-	dg := dgo.NewDgraphClient(api.NewDgraphClient(d))
-
-	// Drop all data
-	err = dg.Alter(context.Background(), &api.Operation{DropAll: true})
-	if err != nil {
-		panic(err)
-	}
-
-	// Create schema for Page
-	op := &api.Operation{}
-	op.Schema = `
-		url: string @index(exact) .
-		title: string @index(exact) .
-		related_pages: [uid] .
-		is_crawled: bool @index(bool) .
-		depth: int @index(int) .
-		time_crawled: datetime @index(hour) .
-		time_found: datetime @index(hour) .
-	`
-	if err := dg.Alter(context.Background(), op); err != nil {
-		log.Fatal(err)
-	}
+	dg := Db_setup()
 
 	target_url := os.Args[1]
 	log.Infof("Nest established; target %s", target_url)
@@ -351,11 +328,9 @@ func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
 	// Add current page to the DB # how you know
 	Related_page := []Page{}
 	for _, p := range page.related_pages {
-		spider.logger.Info("related page info", "related pages", p.URL)
 		Related_page = append(Related_page, p)
 	}
 	page.Related_pages = Related_page
-	spider.logger.Info("made related apges", "related pages", page.Related_pages)
 
 	// Create a new transaction
 	txn := dg.NewTxn()
@@ -379,8 +354,6 @@ func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	spider.logger.Info("adding page to db", "JSON", string(newPageBytes))
 
 	// Create a new mutation
 	mu := &api.Mutation{
@@ -429,7 +402,7 @@ func get_keywords(page *Page, html string) []*string {
 	var keywords []*string
 	err = json.Unmarshal(body, &keywords)
 	if err != nil {
-		log.Fatal(err)
+		return []*string{}
 	}
 
 	return keywords
@@ -475,7 +448,7 @@ func find_related_pages(doc *goquery.Document, current_page *Page) map[URL]Page 
 		domain := parts[len(parts)-2] + "." + parts[len(parts)-1]
 		url_domain_to_count[domain] += 1
 		if url_domain_to_count[domain] > MAX_URLS_PER_PAGE_PER_DOMAIN {
-			log.Info("skipping url", "URL", url, "reason", "too many urls from the same domain", "domain", domain)
+			log.Debug("skipping url", "URL", url, "reason", "too many urls from the same domain", "domain", domain)
 			return
 		}
 
