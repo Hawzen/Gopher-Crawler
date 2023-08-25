@@ -19,17 +19,11 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-// Breadth config
-// const MAX_DEPTH = 3
-// const MAX_URL_PER_PAGE = 10
-// const MAX_URLS_PER_PAGE_PER_DOMAIN = 2
-
-// Depth config
+// Config
 const MAX_DEPTH = 30
-const MAX_URL_PER_PAGE = 15
-const MAX_URLS_PER_PAGE_PER_DOMAIN = 5
+const MAX_URL_PER_PAGE = 30
+const MAX_URLS_PER_PAGE_PER_DOMAIN = 15
 
-// Global config
 const SPIDER_COUNT = 10
 const MAX_PAGES_BUFFER = 10000
 const CRAWL_TIME = 70 * time.Second
@@ -172,7 +166,7 @@ type URL = string
 type Page struct {
 	UID           string    `json:"uid,omitempty"`
 	URL           URL       `json:"url,omitempty"`
-	Domain        *Domain   `json:"domain,omitempty"`
+	Domain        Domain    `json:"domain,omitempty"`
 	Title         string    `json:"title,omitempty"`
 	Related_pages []Page    `json:"related_pages,omitempty"`
 	Is_crawled    bool      `json:"is_crawled,omitempty"`
@@ -313,6 +307,19 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 	page.Summary = get_summary(page, html)
 	page.Keywords = get_keywords(page, html)
 
+	// Get page domain
+	parsed_url, err := url_operations.Parse(page.URL)
+	if err != nil {
+		spider.logger.Warn(err)
+		return nil
+	}
+
+	parts := strings.Split(parsed_url.Hostname(), ".")
+	domain := parts[len(parts)-2] + "." + parts[len(parts)-1]
+	page.Domain = Domain{
+		Name: domain,
+	}
+
 	// Extract all links from the page
 	page.related_pages = find_related_pages(doc, page)
 
@@ -343,11 +350,16 @@ func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
 		page(func: eq(url, "` + page.URL + `")) {
 			v as uid
 		}
+
+		domain(func: eq(name, "` + page.Domain.Name + `")) {
+			d as uid
+		}
 	}
 	`
 
 	// Create a new mutation
 	page.UID = "uid(v)"
+	page.Domain.UID = "uid(d)"
 
 	// Marshal the new Page node into a JSON byte array
 	newPageBytes, err := json.Marshal(page)
@@ -366,7 +378,7 @@ func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
 	// Execute the query
 	// Update email only if matching uid found.
 	if _, err := dg.NewTxn().Do(context.Background(), req); err != nil {
-		log.Fatal(err)
+		log.Fatal(err, "query", req.Query)
 	}
 
 	spider.logger.Info("adding page to db", "URL", page.URL)

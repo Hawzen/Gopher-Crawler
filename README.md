@@ -28,4 +28,21 @@ cd ../crawler
 go run main.go <target_url>
 ```
 
-Browse `http://localhost:8000/` to see graph
+- Browse `http://localhost:8000/`
+- Execute query to see graph
+```graphql
+{ 
+  Page(func: eq(is_crawled, "true")) {
+		title
+    summary
+    keywords
+    related_pages {
+			url
+    }
+  }
+  
+  domain(func: has(name)) {
+		name
+  }
+}
+```

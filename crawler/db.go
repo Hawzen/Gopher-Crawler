@@ -24,16 +24,19 @@ func Db_setup() *dgo.Dgraph {
 		panic(err)
 	}
 
-	// Create schema for Page
 	op := &api.Operation{}
 	op.Schema = `
 		url: string @index(exact) .
+		domain: uid @reverse .
 		title: string @index(exact) .
 		related_pages: [uid] .
 		is_crawled: bool @index(bool) .
 		depth: int @index(int) .
 		time_crawled: datetime @index(hour) .
 		time_found: datetime @index(hour) .
+		summary: string @index(fulltext) .
+        keywords: [string] @index(fulltext) .
+		name: string @index(exact) .
 	`
 	if err := dg.Alter(context.Background(), op); err != nil {
 		log.Fatal(err)
