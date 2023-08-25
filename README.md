@@ -3,6 +3,12 @@
 ## What
 This is a webcrawler that attempts to create a symantic graph of a given target url
 
+
+
+https://github.com/Hawzen/Gopher-Crawler/assets/43524721/b88fd3d4-a870-4136-9937-227358cabb7c
+
+
+
 ## How
 - Use Go to crawl the target url
   - Visit [this](./docs/crawler.md) for more info
