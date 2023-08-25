@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io/ioutil"
 	"net/http"
 	url_operations "net/url"
 	"os"
@@ -24,14 +26,23 @@ import (
 // const MAX_URLS_PER_PAGE_PER_DOMAIN = 2
 
 // Depth config
-const MAX_DEPTH = 3
-const MAX_URL_PER_PAGE = 7
-const MAX_URLS_PER_PAGE_PER_DOMAIN = 2
+const MAX_DEPTH = 30
+const MAX_URL_PER_PAGE = 15
+const MAX_URLS_PER_PAGE_PER_DOMAIN = 5
 
 // Global config
-const SPIDER_COUNT = 2
-const MAX_PAGES_BUFFER = 10
-const CRAWL_TIME = 20 * time.Second
+const SPIDER_COUNT = 10
+const MAX_PAGES_BUFFER = 10000
+const CRAWL_TIME = 70 * time.Second
+
+// Analyzer config
+const PORT = "9898"
+const ANALYZER_URL = "http://localhost:" + PORT
+
+var ANALYZER_ENDPOINTS = map[string]string{
+	"keywords": ANALYZER_URL + "/keywords",
+	"summary":  ANALYZER_URL + "/summarize",
+}
 
 // This is a var but please don't change it :)
 var SPIDER_NAMES = [...]string{
@@ -169,6 +180,8 @@ type Page struct {
 	Time_crawled  time.Time `json:"time_crawled,omitempty"`
 	Time_found    time.Time `json:"time_found,omitempty"`
 	DType         []string  `json:"dgraph.type,omitempty"`
+	Summary       string    `json:"summary,omitempty"`
+	Keywords      []*string `json:"keywords,omitempty"`
 	related_pages map[URL]Page
 }
 
@@ -314,6 +327,15 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 		return nil
 	}
 
+	// Get page summary and keywords
+	html, err := doc.Html()
+	if err != nil {
+		spider.logger.Warn(err)
+		return nil
+	}
+	page.Summary = get_summary(page, html)
+	page.Keywords = get_keywords(page, html)
+
 	// Extract all links from the page
 	page.related_pages = find_related_pages(doc, page)
 
@@ -326,7 +348,7 @@ func (spider *Spider) crawl_page(page *Page) map[URL]Page {
 }
 
 func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
-	// Add current page to the DB
+	// Add current page to the DB # how you know
 	Related_page := []Page{}
 	for _, p := range page.related_pages {
 		spider.logger.Info("related page info", "related pages", p.URL)
@@ -378,6 +400,39 @@ func (spider *Spider) add_page_to_db(page *Page, dg *dgo.Dgraph) {
 
 	// Commit the transaction
 	err = txn.Commit(context.Background())
+}
+
+func get_summary(page *Page, html string) string {
+	resp, err := http.Post("http://localhost:9898/summarize", "application/json", bytes.NewBuffer([]byte(html)))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return string(body)
+}
+
+func get_keywords(page *Page, html string) []*string {
+	resp, err := http.Post(ANALYZER_ENDPOINTS["keywords"], "application/json", bytes.NewBuffer([]byte(html)))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var keywords []*string
+	err = json.Unmarshal(body, &keywords)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return keywords
 }
 
 // ## Page functions
