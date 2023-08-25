@@ -22,6 +22,7 @@ https://github.com/Hawzen/Gopher-Crawler/assets/43524721/b88fd3d4-a870-4136-9937
 ## Need
 - docker
 - go
+- python
 
 
 ## Command
@@ -44,12 +45,12 @@ go run main.go <target_url>
     summary
     keywords
     related_pages {
-			url
+	url
     }
   }
   
-  domain(func: has(name)) {
-		name
+  Domain(func: has(name)) {
+	name
   }
 }
 ```
