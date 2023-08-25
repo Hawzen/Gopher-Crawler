@@ -21,10 +21,10 @@ import (
 
 // Config
 const MAX_DEPTH = 30
-const MAX_URL_PER_PAGE = 30
-const MAX_URLS_PER_PAGE_PER_DOMAIN = 15
+const MAX_URL_PER_PAGE = 5
+const MAX_URLS_PER_PAGE_PER_DOMAIN = 5
 
-const SPIDER_COUNT = 10
+const SPIDER_COUNT = 5
 const MAX_PAGES_BUFFER = 10000
 const CRAWL_TIME = 70 * time.Second
 

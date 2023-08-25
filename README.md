@@ -8,7 +8,8 @@ This is a webcrawler that attempts to create a symantic graph of a given target 
   - Visit [this](./docs/crawler.md) for more info
 - Use Dgraph to store the data
   - Visit [this](./docs/dgraph.md) for more info
-- (WIP) Use Flask to analyze the data
+- Use Flask to analyze the data
+  - Visit [this](./docs/analyzer.md) for more info
 
 # Run
 
